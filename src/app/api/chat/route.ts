@@ -1,33 +1,12 @@
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 
-const apiKey = process.env.GEMINI_API_KEY;
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// Initialize OpenAI client
+const apiKey = process.env.OPENAI_API_KEY;
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
 
-// Models to try in order — using gemini-1.5-flash as it is the most stable, reliable, and has the best free tier.
-const MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"];
-const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 1000; // 1 second initial delay
-
-// Helper: sleep for ms
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Helper: check if an error is retryable (503, 429, etc.)
-function isRetryableError(error: any): boolean {
-  const message = error?.message || "";
-  const status = error?.status || error?.code || error?.httpCode;
-  
-  if (status === 503 || status === 429) return true;
-  if (message.includes("503") || message.includes("UNAVAILABLE")) return true;
-  if (message.includes("429") || message.includes("RESOURCE_EXHAUSTED")) return true;
-  if (message.includes("high demand")) return true;
-  if (message.includes("overloaded")) return true;
-  if (message.includes("temporarily")) return true;
-
-  return false;
-}
+// Use gpt-4o-mini as the default model
+const MODEL = "gpt-4o-mini";
 
 export async function POST(req: Request) {
   try {
@@ -37,7 +16,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No message provided." }, { status: 400 });
     }
 
-    if (!ai) {
+    if (!openai) {
       return NextResponse.json({ error: "Server misconfiguration. API Key missing." }, { status: 500 });
     }
 
@@ -52,60 +31,31 @@ You MUST follow these strict rules:
 5. You may use the provided context to understand what tests the user is looking at, but do not diagnose based on it.
     `;
 
-    // Retry loop with fallback models
-    let lastError: any = null;
+    console.log(`[Chat] Trying OpenAI model "${MODEL}"`);
 
-    for (const model of MODELS) {
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          console.log(`[Chat] Trying model "${model}", attempt ${attempt}/${MAX_RETRIES}`);
+    const response = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: `Context (if any): ${context || "None"}\n\nUser Question: ${message}` }
+      ],
+      temperature: 0.1,
+    });
 
-          const response = await ai.models.generateContent({
-            model,
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  { text: `Context (if any): ${context || "None"}\n\nUser Question: ${message}` }
-                ]
-              }
-            ],
-            config: {
-              systemInstruction,
-              temperature: 0.1,
-            }
-          });
+    const reply = response.choices[0]?.message?.content || "";
+    
+    return NextResponse.json({ reply });
 
-          const reply = response.text;
-          return NextResponse.json({ reply });
-
-        } catch (error: any) {
-          lastError = error;
-          console.error(`[Chat] Model "${model}" attempt ${attempt} failed:`, error?.message || error);
-
-          if (isRetryableError(error) && attempt < MAX_RETRIES) {
-            const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-            console.log(`[Chat] Retryable error detected. Waiting ${delay}ms before retry...`);
-            await sleep(delay);
-            continue;
-          }
-
-          break;
-        }
-      }
-      console.log(`[Chat] Model "${model}" exhausted all retries. Trying next model...`);
-    }
-
-    // All models and retries exhausted
-    console.error("[Chat] All models failed after retries:", lastError);
-
-    const userMessage = isRetryableError(lastError)
+  } catch (error: any) {
+    console.error("Chat API Error:", error);
+    
+    const message = error?.message || "";
+    const status = error?.status || 500;
+    
+    const userMessage = (status === 429 || status === 503) 
       ? "Our AI service is busy right now. Please try again in a moment."
       : "An error occurred while getting the definition.";
 
-    return NextResponse.json({ error: userMessage }, { status: 503 });
-  } catch (error: any) {
-    console.error("Chat API Error:", error);
-    return NextResponse.json({ error: "An unexpected error occurred. Please try again." }, { status: 500 });
+    return NextResponse.json({ error: userMessage }, { status: status >= 500 ? 503 : 500 });
   }
 }
