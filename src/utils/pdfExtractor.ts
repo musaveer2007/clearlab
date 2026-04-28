@@ -3,14 +3,14 @@
 /**
  * Extracts all text content from a PDF file in the browser.
  * Uses dynamic import to ensure pdfjs-dist only loads client-side.
- * Returns the concatenated text from all pages.
+ * The worker is served from /public/pdf.worker.min.mjs as a static asset.
  */
 export async function extractTextFromPDF(file: File): Promise<string> {
-  // Dynamic import to avoid SSR issues — pdfjs-dist requires browser APIs (DOMMatrix, canvas, etc.)
+  // Dynamic import to avoid SSR — pdfjs-dist requires browser APIs
   const pdfjsLib = await import("pdfjs-dist");
 
-  // Set the worker source to the CDN version matching our installed pdfjs-dist
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  // Use the worker served from /public (copied from node_modules during build)
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
   const arrayBuffer = await file.arrayBuffer();
   const uint8Array = new Uint8Array(arrayBuffer);
