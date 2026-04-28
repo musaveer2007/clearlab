@@ -12,6 +12,29 @@ function isRetryableError(error: any): boolean {
   return false;
 }
 
+// Exponential backoff helper
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function callGroqWithRetry(options: any, maxRetries = 3) {
+  let lastError: any;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      if (!groq) throw new Error("Groq client not initialized");
+      return await groq.chat.completions.create(options);
+    } catch (error: any) {
+      lastError = error;
+      if (isRetryableError(error) && i < maxRetries - 1) {
+        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+        console.warn(`[Upload] Groq API error (${error.status}). Retrying in ${Math.round(delay)}ms... (Attempt ${i + 1}/${maxRetries})`);
+        await sleep(delay);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -53,7 +76,8 @@ export async function POST(req: Request) {
     }
 
     // Determine the right model (vision for images, text for PDFs)
-    const MODEL = isPDF ? "llama-3.3-70b-versatile" : "llama-3.2-90b-vision-preview";
+    // Using 11b for vision as it is more stable and faster for simple document parsing
+    const MODEL = isPDF ? "llama-3.3-70b-versatile" : "llama-3.2-11b-vision-preview";
 
     const systemInstruction = `
 You are the intelligence behind ClearLab, an educational tool that helps patients understand their lab reports. 
@@ -123,8 +147,8 @@ YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
       requestOptions.response_format = { type: "json_object" };
     }
 
-    // Call Groq
-    const response = await groq.chat.completions.create(requestOptions);
+    // Call Groq with retry logic
+    const response = await callGroqWithRetry(requestOptions);
 
     const outputText = response.choices[0]?.message?.content;
     if (!outputText) {

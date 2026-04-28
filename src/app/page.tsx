@@ -5,6 +5,7 @@ import { UploadCloud, FileText, Activity, ShieldCheck, Loader2, Globe } from "lu
 import Dashboard, { DashboardData } from "@/components/Dashboard";
 import { supabase } from "@/utils/supabase/client";
 import { extractTextFromPDF } from "@/utils/pdfExtractor";
+import { compressImage } from "@/utils/imageCompressor";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -59,11 +60,23 @@ export default function Home() {
     setError(null);
 
     const formData = new FormData();
-    formData.append("file", file);
+    const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImage = file.type.startsWith("image/");
+
+    // Compress images before upload
+    let fileToUpload: File | Blob = file;
+    if (isImage) {
+      try {
+        fileToUpload = await compressImage(file);
+      } catch (err) {
+        console.error("Image compression failed, using original file:", err);
+      }
+    }
+
+    formData.append("file", fileToUpload);
     formData.append("language", language);
 
     // If it's a PDF, extract text client-side before uploading
-    const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
     if (isPDF) {
       try {
         const extractedText = await extractTextFromPDF(file);
