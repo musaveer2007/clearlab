@@ -40,10 +40,14 @@ export async function POST(req: Request) {
       // Use pdf-parse to extract text from the PDF buffer
       try {
         const pdfData = await pdfParse(buffer);
-        parsedText = pdfData.text;
-      } catch (e) {
+        parsedText = pdfData.text || "";
+        
+        if (parsedText.trim().length < 10) {
+          return NextResponse.json({ error: "The PDF appears to be a scanned image or contains no readable text. Please take a screenshot and upload it as an image (JPG/PNG) instead." }, { status: 400 });
+        }
+      } catch (e: any) {
         console.error("PDF Parsing Error:", e);
-        return NextResponse.json({ error: "Failed to read the PDF file. It might be encrypted or corrupted." }, { status: 400 });
+        return NextResponse.json({ error: "Failed to read the PDF file. It might be a scanned document, encrypted, or corrupted. Please try uploading a screenshot (JPG/PNG) instead." }, { status: 400 });
       }
     }
 
@@ -107,21 +111,41 @@ YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
       });
     }
 
-    // Call Groq
-    const response = await groq.chat.completions.create({
+    let requestOptions: any = {
       model: MODEL,
       messages,
       temperature: 0.1,
-      response_format: { type: "json_object" }
-    });
+    };
+
+    // Groq's vision models currently do not support json_object response format
+    if (isPDF) {
+      requestOptions.response_format = { type: "json_object" };
+    }
+
+    // Call Groq
+    const response = await groq.chat.completions.create(requestOptions);
 
     const outputText = response.choices[0]?.message?.content;
     if (!outputText) {
       throw new Error("No response generated from AI.");
     }
 
-    // Parse the JSON response
-    const parsedData = JSON.parse(outputText);
+    // Parse the JSON response robustly
+    let parsedData;
+    try {
+      const startIndex = outputText.indexOf('{');
+      const endIndex = outputText.lastIndexOf('}');
+      if (startIndex !== -1 && endIndex !== -1) {
+        const jsonString = outputText.slice(startIndex, endIndex + 1);
+        parsedData = JSON.parse(jsonString);
+      } else {
+        parsedData = JSON.parse(outputText);
+      }
+    } catch (parseError) {
+      console.error("Failed to parse JSON:", outputText);
+      throw new Error("The AI returned an invalid format. Please try again.");
+    }
+
     return NextResponse.json({ success: true, data: parsedData });
 
   } catch (error: any) {
