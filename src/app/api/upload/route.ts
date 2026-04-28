@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
-import pdfParse from "pdf-parse";
 
 // Check if API key is provided
 const apiKey = process.env.GROQ_API_KEY;
@@ -18,6 +17,8 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const language = formData.get("language") as string || "English";
+    // Pre-extracted PDF text from the client (browser-side pdf.js)
+    const pdfText = formData.get("pdfText") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -29,26 +30,26 @@ export async function POST(req: Request) {
       }, { status: 500 });
     }
 
-    // Convert file to buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    let parsedText = "";
     const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
+    // For PDFs: use pre-extracted text from the client
+    // For images: read the buffer and send as base64 to vision model
+    let parsedText = "";
+    let buffer: Buffer | null = null;
+
     if (isPDF) {
-      // Use pdf-parse to extract text from the PDF buffer
-      try {
-        const pdfData = await pdfParse(buffer);
-        parsedText = pdfData.text || "";
-        
-        if (parsedText.trim().length < 10) {
-          return NextResponse.json({ error: "The PDF appears to be a scanned image or contains no readable text. Please take a screenshot and upload it as an image (JPG/PNG) instead." }, { status: 400 });
-        }
-      } catch (e: any) {
-        console.error("PDF Parsing Error:", e);
-        return NextResponse.json({ error: "Failed to read the PDF file. It might be a scanned document, encrypted, or corrupted. Please try uploading a screenshot (JPG/PNG) instead." }, { status: 400 });
+      // Use client-extracted text
+      parsedText = pdfText || "";
+
+      if (parsedText.trim().length < 10) {
+        return NextResponse.json({ 
+          error: "The PDF appears to be a scanned image or contains no readable text. Please take a screenshot and upload it as an image (JPG/PNG) instead." 
+        }, { status: 400 });
       }
+    } else {
+      // It's an image — read it into a buffer for base64 encoding
+      const arrayBuffer = await file.arrayBuffer();
+      buffer = Buffer.from(arrayBuffer);
     }
 
     // Determine the right model (vision for images, text for PDFs)
@@ -100,7 +101,7 @@ YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
       });
     } else {
       // It's an image, send as base64
-      const base64Image = buffer.toString('base64');
+      const base64Image = buffer!.toString('base64');
       const mimeType = file.type || "image/jpeg";
       messages.push({
         role: "user",

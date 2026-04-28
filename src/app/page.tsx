@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { UploadCloud, FileText, Activity, ShieldCheck, Loader2, Globe } from "lucide-react";
 import Dashboard, { DashboardData } from "@/components/Dashboard";
 import { supabase } from "@/utils/supabase/client";
+import { extractTextFromPDF } from "@/utils/pdfExtractor";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -60,6 +61,20 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("language", language);
+
+    // If it's a PDF, extract text client-side before uploading
+    const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (isPDF) {
+      try {
+        const extractedText = await extractTextFromPDF(file);
+        formData.append("pdfText", extractedText);
+      } catch (pdfErr) {
+        console.error("Client-side PDF extraction failed:", pdfErr);
+        setError("Failed to read the PDF file. It might be a scanned document or corrupted. Please try uploading a screenshot (JPG/PNG) instead.");
+        setIsUploading(false);
+        return;
+      }
+    }
 
     try {
       const res = await fetch("/api/upload", {
