@@ -28,9 +28,6 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}
       >
-        <div className="bg-brand-blue/80 backdrop-blur text-white text-center py-2 px-4 text-sm font-medium">
-          ⚠️ This tool provides educational information only and is not a substitute for professional medical advice.
-        </div>
         <header className="bg-white/5 backdrop-blur-xl border-b border-white/10 py-4 px-6 sticky top-0 z-50 shadow-sm">
           <div className="max-w-5xl mx-auto flex items-center justify-between">
             <Link href="/" className="text-2xl font-bold text-white tracking-tight">ClearLab</Link>
