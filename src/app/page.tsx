@@ -103,12 +103,8 @@ export default function Home() {
       }
 
       if (!res.ok || !json.success) {
-        // Sanitize: never show raw JSON or technical errors to user
-        const rawMsg = json?.error || "";
-        if (typeof rawMsg === "string" && rawMsg.length < 200 && !rawMsg.startsWith("{")) {
-          throw new Error(rawMsg);
-        }
-        throw new Error("The AI service is temporarily busy. Please wait a moment and try again.");
+        const errorMsg = json?.error || "An unknown error occurred. Please try again.";
+        throw new Error(errorMsg);
       }
 
       setDashboardData(json.data);

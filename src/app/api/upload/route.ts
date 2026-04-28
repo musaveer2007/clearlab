@@ -37,10 +37,15 @@ async function callGroqWithRetry(options: any, maxRetries = 3) {
 
 export async function POST(req: Request) {
   try {
+    console.log("[Upload] Received upload request");
+    
+    if (!apiKey) {
+      console.error("[Upload] CRITICAL: GROQ_API_KEY is missing from environment variables");
+    }
+
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const language = formData.get("language") as string || "English";
-    // Pre-extracted PDF text from the client (browser-side pdf.js)
     const pdfText = formData.get("pdfText") as string | null;
 
     if (!file) {
@@ -49,35 +54,31 @@ export async function POST(req: Request) {
 
     if (!groq) {
       return NextResponse.json({ 
-        error: "Server configuration missing (GROQ_API_KEY). Please set this environment variable." 
+        error: "Server configuration missing (GROQ_API_KEY). Please contact support or check environment variables." 
       }, { status: 500 });
     }
 
     const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    console.log(`[Upload] Processing ${isPDF ? "PDF" : "Image"}: ${file.name} (${file.type})`);
 
-    // For PDFs: use pre-extracted text from the client
-    // For images: read the buffer and send as base64 to vision model
     let parsedText = "";
     let buffer: Buffer | null = null;
 
     if (isPDF) {
-      // Use client-extracted text
       parsedText = pdfText || "";
-
       if (parsedText.trim().length < 10) {
         return NextResponse.json({ 
-          error: "The PDF appears to be a scanned image or contains no readable text. Please take a screenshot and upload it as an image (JPG/PNG) instead." 
+          error: "The PDF contains no readable text. Please try uploading a screenshot instead." 
         }, { status: 400 });
       }
     } else {
-      // It's an image — read it into a buffer for base64 encoding
       const arrayBuffer = await file.arrayBuffer();
       buffer = Buffer.from(arrayBuffer);
     }
 
-    // Determine the right model (vision for images, text for PDFs)
-    // Using 11b for vision as it is more stable and faster for simple document parsing
+    // Model selection
     const MODEL = isPDF ? "llama-3.3-70b-versatile" : "llama-3.2-11b-vision-preview";
+    console.log(`[Upload] Using model: ${MODEL}`);
 
     const systemInstruction = `
 You are the intelligence behind ClearLab, an educational tool that helps patients understand their lab reports. 
@@ -112,25 +113,20 @@ YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
 }
     `;
 
-    console.log(`[Upload] Sending request to Groq using ${MODEL}`);
-
-    let messages: any[] = [
-      { role: "system", content: systemInstruction }
-    ];
+    let messages: any[] = [{ role: "system", content: systemInstruction }];
 
     if (isPDF) {
       messages.push({
         role: "user",
-        content: `Here is the text extracted from the lab report. Please analyze it and translate the explanations into ${language}.\n\n--- REPORT TEXT ---\n${parsedText}`
+        content: `Analyze this report text and translate into ${language}:\n\n${parsedText}`
       });
     } else {
-      // It's an image, send as base64
       const base64Image = buffer!.toString('base64');
       const mimeType = file.type || "image/jpeg";
       messages.push({
         role: "user",
         content: [
-          { type: "text", text: `Here is the lab report image. Please analyze it and translate the explanations into ${language}.` },
+          { type: "text", text: `Analyze this lab report image and translate into ${language}.` },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
         ]
       });
@@ -142,20 +138,19 @@ YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
       temperature: 0.1,
     };
 
-    // Groq's vision models currently do not support json_object response format
     if (isPDF) {
       requestOptions.response_format = { type: "json_object" };
     }
 
-    // Call Groq with retry logic
-    const response = await callGroqWithRetry(requestOptions);
+    console.log(`[Upload] Calling Groq API...`);
+    const response = await callGroqWithRetry(requestOptions, 4);
+    console.log(`[Upload] Groq API call successful`);
 
     const outputText = response.choices[0]?.message?.content;
     if (!outputText) {
-      throw new Error("No response generated from AI.");
+      throw new Error("The AI service returned an empty response.");
     }
 
-    // Parse the JSON response robustly
     let parsedData;
     try {
       const startIndex = outputText.indexOf('{');
@@ -167,22 +162,30 @@ YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
         parsedData = JSON.parse(outputText);
       }
     } catch (parseError) {
-      console.error("Failed to parse JSON:", outputText);
+      console.error("[Upload] JSON Parse Error:", outputText);
       throw new Error("The AI returned an invalid format. Please try again.");
     }
 
     return NextResponse.json({ success: true, data: parsedData });
 
   } catch (error: any) {
-    console.error("Upload API Error:", error);
+    console.error("[Upload] API Error Details:", {
+      status: error?.status,
+      message: error?.message,
+      name: error?.name,
+      code: error?.code
+    });
     
-    const userMessage = isRetryableError(error)
-      ? "Our AI service is experiencing high demand right now. Please wait a moment and try again."
-      : error?.message || "An error occurred while processing your request.";
+    let userMessage = error?.message || "An unexpected error occurred.";
+    if (isRetryableError(error)) {
+      userMessage = "The AI service is currently overloaded. Please wait 10-20 seconds and try again.";
+    } else if (error?.status === 401) {
+      userMessage = "Invalid API Key. Please check your GROQ_API_KEY environment variable.";
+    }
 
     return NextResponse.json(
       { error: userMessage },
-      { status: error?.status >= 500 ? 503 : 500 }
+      { status: error?.status || 500 }
     );
   }
 }
