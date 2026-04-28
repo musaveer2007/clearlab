@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import Groq from "groq-sdk";
 
-// Initialize OpenAI client
-const apiKey = process.env.OPENAI_API_KEY;
-const openai = apiKey ? new OpenAI({ apiKey }) : null;
+// Initialize Groq client
+const apiKey = process.env.GROQ_API_KEY;
+const groq = apiKey ? new Groq({ apiKey }) : null;
 
-// Use gpt-4o-mini as the default model
-const MODEL = "gpt-4o-mini";
+// Use Llama 3.3 70B for fast, highly capable chat
+const MODEL = "llama-3.3-70b-versatile";
 
 export async function POST(req: Request) {
   try {
@@ -16,8 +16,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No message provided." }, { status: 400 });
     }
 
-    if (!openai) {
-      return NextResponse.json({ error: "Server misconfiguration. API Key missing." }, { status: 500 });
+    if (!groq) {
+      return NextResponse.json({ error: "Server misconfiguration. GROQ_API_KEY missing." }, { status: 500 });
     }
 
     const systemInstruction = `
@@ -31,9 +31,9 @@ You MUST follow these strict rules:
 5. You may use the provided context to understand what tests the user is looking at, but do not diagnose based on it.
     `;
 
-    console.log(`[Chat] Trying OpenAI model "${MODEL}"`);
+    console.log(`[Chat] Trying Groq model "${MODEL}"`);
 
-    const response = await openai.chat.completions.create({
+    const response = await groq.chat.completions.create({
       model: MODEL,
       messages: [
         { role: "system", content: systemInstruction },
@@ -49,9 +49,7 @@ You MUST follow these strict rules:
   } catch (error: any) {
     console.error("Chat API Error:", error);
     
-    const message = error?.message || "";
     const status = error?.status || 500;
-    
     const userMessage = (status === 429 || status === 503) 
       ? "Our AI service is busy right now. Please try again in a moment."
       : "An error occurred while getting the definition.";

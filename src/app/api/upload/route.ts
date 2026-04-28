@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import Groq from "groq-sdk";
 import pdfParse from "pdf-parse";
 
 // Check if API key is provided
-const apiKey = process.env.OPENAI_API_KEY;
-const openai = apiKey ? new OpenAI({ apiKey }) : null;
-
-// Use gpt-4o-mini as the default model
-const MODEL = "gpt-4o-mini";
+const apiKey = process.env.GROQ_API_KEY;
+const groq = apiKey ? new Groq({ apiKey }) : null;
 
 // Helper: check if an error is retryable (503, 429, etc.)
 function isRetryableError(error: any): boolean {
@@ -26,9 +23,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    if (!openai) {
+    if (!groq) {
       return NextResponse.json({ 
-        error: "Server configuration missing (OPENAI_API_KEY). Please set this environment variable." 
+        error: "Server configuration missing (GROQ_API_KEY). Please set this environment variable." 
       }, { status: 500 });
     }
 
@@ -50,10 +47,13 @@ export async function POST(req: Request) {
       }
     }
 
+    // Determine the right model (vision for images, text for PDFs)
+    const MODEL = isPDF ? "llama-3.3-70b-versatile" : "llama-3.2-90b-vision-preview";
+
     const systemInstruction = `
 You are the intelligence behind ClearLab, an educational tool that helps patients understand their lab reports. 
 You are NOT a doctor. You MUST NOT provide medical diagnoses or suggest medications/dosages.
-Your goal is to parse and analyze the provided medical lab report text or image and return it in a structured JSON format.
+Your goal is to parse and analyze the provided medical lab report text or image and return it ONLY as a raw JSON object.
 
 MANDATORY RULES:
 1. Translate medical jargon into simple, plain ${language}.
@@ -62,9 +62,28 @@ MANDATORY RULES:
 4. Do NOT use panic-inducing language (e.g. avoid "dangerous", "disease", "failure"). Instead use "slightly outside the usual range", "may happen due to common reasons".
 5. Provide a friendly overall summary in ${language}.
 6. Generate questions the patient can ask their doctor in ${language}.
+
+YOU MUST RETURN EXACTLY THIS JSON STRUCTURE:
+{
+  "summary": "Your friendly summary in ${language}...",
+  "results": [
+    {
+      "testName": "eGFR",
+      "value": "58",
+      "unit": "mL/min",
+      "referenceRange": ">60",
+      "riskLevel": "Yellow",
+      "explanation": "Your kidney filtration is slightly lower than typical..."
+    }
+  ],
+  "doctorQuestions": [
+    "Should I repeat this test?",
+    "Is this temporary or chronic?"
+  ]
+}
     `;
 
-    console.log(`[Upload] Sending request to OpenAI using ${MODEL}`);
+    console.log(`[Upload] Sending request to Groq using ${MODEL}`);
 
     let messages: any[] = [
       { role: "system", content: systemInstruction }
@@ -88,58 +107,12 @@ MANDATORY RULES:
       });
     }
 
-    // Call OpenAI
-    const response = await openai.chat.completions.create({
+    // Call Groq
+    const response = await groq.chat.completions.create({
       model: MODEL,
       messages,
-      temperature: 0.2,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "lab_report_schema",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              summary: {
-                type: "string",
-                description: "A friendly, plain-English summary of the overall lab report. Do not provide medical advice or diagnosis."
-              },
-              results: {
-                type: "array",
-                description: "List of individual lab test results found in the report.",
-                items: {
-                  type: "object",
-                  properties: {
-                    testName: { type: "string", description: "Name of the test (e.g., eGFR, Hemoglobin)" },
-                    value: { type: "string", description: "The patient's result value" },
-                    unit: { type: "string", description: "Unit of measurement (e.g., mg/dL)" },
-                    referenceRange: { type: "string", description: "The normal reference range" },
-                    riskLevel: {
-                      type: "string",
-                      enum: ["Green", "Yellow", "Red"],
-                      description: "Green if normal. Yellow if slightly outside normal or watch carefully. Red if significantly abnormal or requires discussion soon."
-                    },
-                    explanation: {
-                      type: "string",
-                      description: "Plain-English explanation of what this test measures and what the value might generally indicate. Do NOT diagnose. Use cautious language ('may indicate', 'could suggest')."
-                    }
-                  },
-                  required: ["testName", "value", "unit", "referenceRange", "riskLevel", "explanation"],
-                  additionalProperties: false
-                }
-              },
-              doctorQuestions: {
-                type: "array",
-                description: "3-5 suggested questions for the patient to ask their doctor based on abnormal or notable results.",
-                items: { type: "string" }
-              }
-            },
-            required: ["summary", "results", "doctorQuestions"],
-            additionalProperties: false
-          }
-        }
-      }
+      temperature: 0.1,
+      response_format: { type: "json_object" }
     });
 
     const outputText = response.choices[0]?.message?.content;
