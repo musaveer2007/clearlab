@@ -67,10 +67,20 @@ export default function Home() {
         body: formData,
       });
 
-      const json = await res.json();
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        throw new Error("Server returned an invalid response. Please try again.");
+      }
 
       if (!res.ok || !json.success) {
-        throw new Error(json.error || "Failed to process the lab report.");
+        // Sanitize: never show raw JSON or technical errors to user
+        const rawMsg = json?.error || "";
+        if (typeof rawMsg === "string" && rawMsg.length < 200 && !rawMsg.startsWith("{")) {
+          throw new Error(rawMsg);
+        }
+        throw new Error("The AI service is temporarily busy. Please wait a moment and try again.");
       }
 
       setDashboardData(json.data);
@@ -96,7 +106,13 @@ export default function Home() {
       }
       
     } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+      const msg = err?.message || "";
+      // Final safety net: never show JSON or overly technical errors
+      if (msg.includes("{") || msg.includes('"code"') || msg.length > 200) {
+        setError("Something went wrong. Please try again in a moment.");
+      } else {
+        setError(msg || "An unexpected error occurred.");
+      }
     } finally {
       setIsUploading(false);
     }
@@ -171,7 +187,18 @@ export default function Home() {
               </label>
             </div>
 
-            {error && <p className="mt-4 text-brand-red text-sm font-medium">{error}</p>}
+            {error && (
+              <div className="mt-4 flex flex-col items-center gap-3 glass-panel rounded-xl p-4 border border-red-500/30 bg-red-500/10">
+                <p className="text-brand-red text-sm font-medium text-center">{error}</p>
+                <button
+                  onClick={handleUpload}
+                  disabled={!file || isUploading}
+                  className="text-xs px-4 py-2 rounded-lg bg-brand-blue hover:bg-blue-600 text-white font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  🔄 Retry
+                </button>
+              </div>
+            )}
 
             <div className="mt-6 flex items-center justify-center space-x-3 glass-panel rounded-lg p-3">
               <Globe className="w-5 h-5 text-slate-300" />
