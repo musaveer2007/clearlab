@@ -4,8 +4,8 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-// Models to try in order — if the primary is overloaded, fall back
-const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+// Models to try in order — using gemini-1.5-flash as it is the most stable, reliable, and has the best free tier.
+const MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"];
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1500; // 1.5 second initial delay
 
